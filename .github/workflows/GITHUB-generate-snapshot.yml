@@ -1,0 +1,80 @@
+# .github/workflows/generate-snapshot.yml
+name: 'GITHUB Snapshot'
+
+on:
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Check out the repository's code.
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Python.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Step 3: Run the snapshot generator script directly inline.
+      - name: Generate Snapshot
+        id: snapshot_script
+        shell: python
+        run: |
+          import os
+
+          def generate_repo_snapshot_content(repo_root_dir, github_repo_url):
+              """
+              Generates the content for a single markdown file containing links and content of files
+              from a local GitHub repository, skipping content for specified folders.
+              """
+              SKIP_CONTENT_FOLDERS = [
+                  os.path.join('public', 'DUMP'),
+              ]
+              output_lines = []
+              for root, dirs, files in os.walk(repo_root_dir):
+                  # --- THIS IS THE FIX: We have REMOVED '.github' from this list ---
+                  dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '.next', '.vercel']]
+                  files.sort()
+                  for filename in files:
+                      file_path = os.path.join(root, filename)
+                      relative_file_path = os.path.relpath(file_path, repo_root_dir)
+                      github_blob_url = f'{github_repo_url}/blob/main/{relative_file_path.replace(os.sep, "/")}'
+                      output_lines.append(github_blob_url + '\n')
+                      
+                      skip_content = any(relative_file_path.startswith(folder) for folder in SKIP_CONTENT_FOLDERS)
+                      is_binary = any(relative_file_path.endswith(ext) for ext in ['.ico', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.mp4', '.mov', '.avi', '.woff', '.woff2', '.ttf', '.otf', '.sql', '.zip'])
+
+                      if skip_content or is_binary:
+                          output_lines.append('```\nContent skipped (binary or ignored folder).\n```\n')
+                      else:
+                          try:
+                              with open(file_path, 'r', encoding='utf-8') as f:
+                                  file_content = f.read()
+                                  lang = os.path.splitext(filename)[1].lstrip('.') if os.path.splitext(filename)[1] else 'text'
+                                  output_lines.append(f'```{lang}\n{file_content}\n```\n')
+                          except Exception as e:
+                              output_lines.append(f'```\nError reading file: {e}\n```\n')
+                      output_lines.append('---\n')
+              return '\n'.join(output_lines)
+
+          if __name__ == '__main__':
+              local_repo_root = os.environ.get('GITHUB_WORKSPACE', '.')
+              github_url = 'https://github.com/u4771486195/H-octokit-github.js' 
+              snapshot_content = generate_repo_snapshot_content(local_repo_root, github_url)
+              
+              output_filename = 'repo_snapshot.md'
+              with open(output_filename, 'w', encoding='utf-8') as outfile:
+                  outfile.write(snapshot_content)
+              
+              print(f'Repository snapshot generated successfully at: {output_filename}')
+
+      # Step 4: Upload the generated snapshot file from the root.
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-snapshot
+
+          path: repo_snapshot.md
